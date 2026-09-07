@@ -1,11 +1,15 @@
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
+#include <ostream>
 #include <vector>
+#include <string>
+#include <raylib.h>
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#endif
 
 using namespace std;
-
-#include <raylib.h>
 
 class Vector {
 public:
@@ -20,8 +24,7 @@ public:
 
 class Vec2 {
     friend std::ostream& operator<<(std::ostream& os, const Vec2& vec) {
-        return os << "(" << vec.x << ", " << vec.y << ")";
-    }
+        return os << "(" << vec.x << ", " << vec.y << ")"; }
 
     public:
         float x;
@@ -29,10 +32,13 @@ class Vec2 {
 
         Vec2(float x, float y) : x(x), y(y) {}
 
-        //non-statics(nyon~)
-        //Operators
         inline bool operator==(const Vec2& other) {
             if (x == other.x && y == other.y) return true;
+            return false;
+        }
+
+        inline bool operator!=(const Vec2& other) {
+            if (x != other.x && y != other.y) return true;
             return false;
         }
 
@@ -103,24 +109,20 @@ class Vec2 {
             return result / result.Magnitude();
         }
 
-        //Staticssss
-        //Consts(exlude random will you)
         static inline const struct VectorZero { operator Vec2() const { return Vec2(0.0f, 0.0f); } } ZERO;
         static inline const struct VectorUp { operator Vec2() const { return Vec2(0.0f, -1.0f); } } UP;
         static inline const struct VectorDown { operator Vec2() const { return Vec2(0.0f, 1.0f); } } DOWN;
         static inline const struct VectorLeft { operator Vec2() const { return Vec2(1.0f, 0.0f); } } LEFT;
         static inline const struct VectorRight { operator Vec2() const { return Vec2(-1.0f, 0.0f); } } RIGHT;
         static inline const struct VectorInvalid { operator Vec2() const { return Vec2(NAN, NAN); } } INVALID;
-        static inline struct VectorRandom { operator Vec2() const { return Vec2(rand() % 11, rand() % 11); } } RANDOM;
+        static inline const struct VectorMousePos { operator Vec2() const { return Vec2(GetMouseX(), GetMouseY()); } } MOUSE;
+        static inline const struct VectorRandom { operator Vec2() const { return Vec2(rand() % 3, rand() % 3); } } RANDOM;
 
-        //Functions(nya~)
         static inline float DotProduct(Vec2 Vector1, Vec2 Vector2) {
-            return Vector1.x * Vector2.x + Vector1.y * Vector2.y;
-        }
+            return Vector1.x * Vector2.x + Vector1.y * Vector2.y; }
 
         static inline Vec2 Reflect(Vec2 Incidence, Vec2 Normal) {
-            return Incidence - Normal * 2 * Vec2::DotProduct(Incidence, Normal);
-        }
+            return Incidence - Normal * 2 * Vec2::DotProduct(Incidence, Normal); }
 
         static inline Vec2 Normal(Vec2 Vector1, Vec2 Vector2, bool xNeg = true) {
             float dx = Vector1.x - Vector2.x;
@@ -154,16 +156,30 @@ class LineSegment {
 
         LineSegment(Vec2 P1, Vec2 P2) : Point1(P1), Point2(P2) {}
 
-        //Non-statics
+        inline bool operator==(const LineSegment& other) {
+            if (Point1 == other.Point1 && Point2 == other.Point2) return true; 
+            return false;
+        }
+
+        inline bool operator!=(const LineSegment& other) {
+            if (Point1 != other.Point1 && Point2 != other.Point2) return true;
+            return false;
+        }
+
         Vec2 LineVector() { return this->Point2 - this->Point1; }
         Vec2 Normal() { return Vec2::Normal(this->Point1, this->Point2); }
         Vec2 OtherNormal() { return Vec2::Normal(this->Point1, this->Point2, false); }
         Vec2 MidPoint() { return this->Point1 + this->LineVector() / 2; }
         float Length() { return this->LineVector().Magnitude(); }
 
-        Vec2 DetectCollision(Orb orb) {
-            Vec2 OrbPos = orb.Position;
-            Vec2 OrbVel = orb.Velocity;
+        inline bool IsInvalid() {
+            if (Point1.IsInvalid() || Point2.IsInvalid()) return true;
+            return false;
+        }
+
+        void DetectCollision(Orb &orb) {
+            Vec2 &OrbPos = orb.Position;
+            Vec2 &OrbVel = orb.Velocity;
             
             Vec2 MidToBall = OrbPos - this->MidPoint(); // Find the dir vector of Midpoint to the ball
             const float DotBallToLine = Vec2::DotProduct(MidToBall, this->Normal()); // Get the dot of dir vec and the normal
@@ -178,30 +194,81 @@ class LineSegment {
                 } else {
                     Vec2 P1ToBall = OrbPos - Point1;
                     Vec2 P2ToBall = OrbPos - Point2;
-                    if (abs(Vec2::DotProduct(OrbPos, Point1)) <= orb.Radius){
-                        cout << "Point1";
+                    if (abs(Vec2::DotProduct(P1ToBall, P1ToBall.Normalized())) <= orb.Radius)
                         OrbVel = Vec2::Reflect(OrbVel, P1ToBall.Normalized());
-                    }
-                    else if (abs(Vec2::DotProduct(OrbPos, Point2)) <= orb.Radius) {
-                        cout << "Point2";
+                    else if (abs(Vec2::DotProduct(P2ToBall, P2ToBall.Normalized())) <= orb.Radius) 
                         OrbVel = Vec2::Reflect(OrbVel, P2ToBall.Normalized());
-                    }
                 }
             }
-            return OrbVel;
         }
+
+        static inline const struct LineInvalid { operator LineSegment() const { return LineSegment(Vec2::INVALID, Vec2::INVALID); } } INVALID;
 };
 
-int main(void) {
-    const int ScreenWidth = 1920;
-    const int ScreenHeight = 1080;
+const int ScreenWidth = 1920;
+const int ScreenHeight = 1080;
+std::vector<Orb> Orbs;
+LineSegment TempLine = LineSegment::INVALID;
+std::vector<LineSegment> Lines;
+Vec2 LastClicked = Vec2::INVALID;
 
+void DoFrame() {
+    float delta = GetFrameTime();
+
+    BeginDrawing();
+    ClearBackground(RAYWHITE);
+
+    //Player Input
+    if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) { //Checks for player Input
+        if (LastClicked.IsInvalid()) { //Check if last clicked is invalid
+            LastClicked = Vec2::MOUSE; //if so set it to mouse pos
+            TempLine.Point1 = LastClicked;
+        }
+        else { //if not,
+            Lines.push_back(LineSegment(LastClicked, Vec2::MOUSE)); //Add a new segment that has last clicked as p1 and new mouse pos as p2
+            LastClicked = Vec2::INVALID; //and reset it back to invalid
+            TempLine = LineSegment::INVALID;
+        }  
+    }
+
+    if (!LastClicked.IsInvalid()) TempLine.Point2 = Vec2::MOUSE;    
+
+    if (IsKeyPressed(KEY_SPACE)) 
+        Orbs.push_back(Orb(Vec2::MOUSE, Vec2::RANDOM, 40));
+
+    for (Orb& orb : Orbs) {
+        orb.Position += orb.Velocity * delta * 150.0f;
+
+        for (LineSegment& line : Lines) 
+            line.DetectCollision(orb);
+
+        Vec2 OrbPos = orb.Position;
+        DrawCircle(OrbPos.x, OrbPos.y, orb.Radius, LIGHTGRAY);
+        DrawCircleLines(OrbPos.x, OrbPos.y, orb.Radius + 0.5, BLACK);
+    }
+
+    if (!TempLine.IsInvalid())
+        DrawLine(TempLine.Point1.x, TempLine.Point1.y, TempLine.Point2.x, TempLine.Point2.y, GRAY);;
+
+    for (LineSegment& line : Lines) 
+        DrawLine(line.Point1.x, line.Point1.y, line.Point2.x, line.Point2.y, BLACK);
+
+    char fpsArray[20];
+    sprintf(fpsArray, "%f", 1 / delta);
+    string fpsString = "fps: ";
+    fpsString.append(fpsArray);
+    if (10 < fpsString.size()) fpsString.erase(10);
+
+    DrawText(fpsString.data(), 2, 0, 20, BLACK);
+        
+    EndDrawing();
+}
+
+
+int main(void) {
     InitWindow(ScreenWidth, ScreenHeight, "Ball Game");
 
-    SetTargetFPS(300);
-
-    std::vector<Orb> Orbs;
-    Orbs.push_back(Orb(Vec2(500, 500), Vec2(1,1), 40));
+    Orbs.push_back(Orb(Vec2(500, 500), Vec2::RANDOM, 40));
 
     Vec2 Corners[4] = {
         Vec2(0,0),
@@ -210,47 +277,19 @@ int main(void) {
         Vec2(ScreenWidth, 0)
     };
 
-    std::vector<LineSegment> Lines;
     Lines.push_back(LineSegment(Corners[0], Corners[1]));
     Lines.push_back(LineSegment(Corners[1], Corners[2]));
     Lines.push_back(LineSegment(Corners[2], Corners[3]));
     Lines.push_back(LineSegment(Corners[3], Corners[0]));
 
-    Vec2 LastClicked = Vec2::INVALID;
-
-    while (!WindowShouldClose()) {
-        float delta = GetFrameTime();
-
-        BeginDrawing();
-        ClearBackground(RAYWHITE);
-
-        //Player Input
-        if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) { //Checks for player Input
-            if (LastClicked.IsInvalid()) //Check if last clicked is invalid
-                LastClicked = Vec2(GetMouseX(), GetMouseY()); //if so set it to mouse pos
-            else { //if not,
-                Lines.push_back(LineSegment(LastClicked, Vec2(GetMouseX(), GetMouseY()))); //Add a new segment that has last clicked as p1 and new mouse pos as p2
-                LastClicked = Vec2::INVALID; //and set last click back to invalid
-            }  
+    #ifdef __EMSCRIPTEN__
+        emscripten_set_main_loop(DoFrame, 0, 1);
+    #else
+        SetTargetFPS(100);
+        while (!WindowShouldClose()) {
+            DoFrame();
         }
-
-        //Simulation
-        for (Orb& orb : Orbs) {
-            orb.Position += orb.Velocity * delta * 300.0f;
-
-            for (LineSegment& line : Lines) 
-                orb.Velocity = line.DetectCollision(orb);
-
-            Vec2 OrbPos = orb.Position;
-            DrawCircle(OrbPos.x, OrbPos.y, orb.Radius, LIGHTGRAY);
-            DrawCircleLines(OrbPos.x, OrbPos.y, orb.Radius + 0.5, BLACK);
-        }
-
-        for (LineSegment& line : Lines) 
-            DrawLine(line.Point1.x, line.Point1.y, line.Point2.x, line.Point2.y, BLACK);
-
-        EndDrawing();
-    }
-    CloseWindow();
-    return 1;
+    #endif
+        CloseWindow();
+        return 1;
 }
