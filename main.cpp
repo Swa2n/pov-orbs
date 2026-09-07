@@ -11,17 +11,6 @@
 
 using namespace std;
 
-class Vector {
-public:
-    int x, y;
-
-    Vector(int x_val, int y_val) : x(x_val), y(y_val) {}
-
-    Vector operator+(const Vector& other) {
-        return Vector(x + other.x, y + other.y);
-    }
-};
-
 class Vec2 {
     friend std::ostream& operator<<(std::ostream& os, const Vec2& vec) {
         return os << "(" << vec.x << ", " << vec.y << ")"; }

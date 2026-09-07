@@ -1,2 +1,2 @@
 CompileFlags:
-  Add: [ "-isystem", "/run/host/usr/include" ]
+  Add: [ "-isystem", "-I/usr/include" ]
